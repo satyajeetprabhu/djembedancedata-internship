@@ -713,7 +713,7 @@ def plot_cycle_onsets(df=None, instr=None, mean_std=True, hist_ons=False, **kwar
             # Flatten onsets for histogram
             onsets_flattened = norm_df[instrument].values.flatten()
             onsets_flattened = onsets_flattened[~np.isnan(onsets_flattened)]
-            ax.hist(onsets_flattened, bins=100, density=False, alpha=0.2, facecolor='black')
+            ax.hist(onsets_flattened, bins=200, density=False, alpha=0.2, facecolor='black')
 
         if mean_std:
             # Calculate and plot mean/std dev for each SD value
