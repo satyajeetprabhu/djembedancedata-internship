@@ -36,6 +36,7 @@ Plotting
     :toctree: generated/
 
     plot_cycle_onsets
+    plot_cycle_hist
     
 """
 
@@ -46,7 +47,7 @@ import scipy.stats as sp
 import pandas as pd
 
 
-__all__ = ['load_df_csv', 'add_window', 'find_closest_onset_in_df', 'find_onsets_in_window', 'detrend_anchor', 'assign_onsets_to_cycles', 'normalize_onsets_df', 'plot_cycle_onsets']
+__all__ = ['load_df_csv', 'add_window', 'find_closest_onset_in_df', 'find_onsets_in_window', 'detrend_anchor', 'assign_onsets_to_cycles', 'normalize_onsets_df', 'plot_cycle_onsets', 'plot_cycle_hist']
 
 
 # INPUT
@@ -236,7 +237,7 @@ def find_onsets_in_window(df, ini_time, end_time):
 
 # DETRENDING
 
-# Main function to add Anchor.Time columns to meter_df based on mode
+# Function to add Anchor.Time columns to meter_df based on mode
 
 def detrend_anchor(meter_df, time_column, instr_df, tolerance=(0.5,0.5), num_div=16, mode='closest.instr', col_name='Anchor.Time'):
     """
@@ -339,6 +340,89 @@ def detrend_anchor(meter_df, time_column, instr_df, tolerance=(0.5,0.5), num_div
     else:
         raise ValueError("Invalid mode! Use mode='closest.instr' or mode='defined.instr'")
 
+    return meter_df
+
+# Function to add Democratic.Time columns to meter_df based on mode
+
+def detrend_virtual(meter_df, time_column, instr_df, tolerance=(0.5,0.5), num_div=16, mode='simple.mean', col_name='Democratic.Time'):
+    """
+    Adds level 3 m.cycle times to `meter_df` based on Virtual method.
+    
+    Parameters:
+    -----------
+    - meter_df: DataFrame
+        DataFrame containing the cycle start times.
+    - time_column: str
+        name of the column in meter_df containing cycle start times.
+    - instr_df: DataFrame
+        DataFrame containing the onset times of instruments. The order of columns assumes order of preference.
+    - tolerance: tuple
+        parameter for defining the shape of the window.
+    - num_div: int
+        Number of subdivisions in a cycle.
+    - mode: str
+        Determines which method to use.
+      - mode = 'median' : median of onsets in window.
+      - mode = 'simple.mean': mean of onsets in window.
+      - mode = 'mean.of.avg': average of onsets in window by instrument, followed by mean of averages.
+    - col_name: str
+        Name of the new column to be added to meter_df. Default is 'Democratic.Time'.
+    
+    Returns:
+    - meter_df: DataFrame
+        original meter_df with the new 'Democratic.Time' column added.
+
+    Notes:
+    ------
+    """
+    
+    meter_df = meter_df.copy()
+                
+    # Add window columns to meter_df
+    meter_df = add_window(meter_df, time_column, tolerance, num_div)
+
+    # Iterate over rows of meter_df
+    for index, row in meter_df.iterrows():
+        time = row[time_column]
+        ini_time = row['ini_time']
+        end_time = row['end_time']
+
+        # Find the closest onset within the window
+        valid_onsets = find_onsets_in_window(df=instr_df, ini_time=ini_time, end_time=end_time)
+
+        # Filter out any empty arrays in valid_onsets
+        valid_onsets = [onsets for onsets in valid_onsets if onsets.size > 0]
+
+        # Compute new time based on mode
+        if valid_onsets:
+            
+            if mode == 'median':
+                # Flatten the list of arrays and compute the median
+                flattened_array = np.concatenate(valid_onsets)
+                new_time = np.median(flattened_array)
+            
+            elif mode == 'simple.mean':
+                # Flatten the list of arrays and compute the mean
+                flattened_array = np.concatenate(valid_onsets)
+                new_time = np.mean(flattened_array)
+
+            elif mode == 'mean.of.avg':
+                # Compute the mean of the averages of each instrument
+                new_time = np.mean([np.mean(onsets) for onsets in valid_onsets])
+            
+            # Compute average of all onsets in the window
+            else:
+                raise ValueError("Invalid mode! Use mode='median', 'simple.mean' or 'mean.of.avg'")
+
+        else:
+            # Default to original time if no valid onsets are found in window
+            new_time = time
+
+        meter_df.at[index, col_name] = new_time
+    
+    # Drop the window columns after the operation
+    meter_df.drop(columns=['ini_time', 'end_time'], inplace=True)        
+    
     return meter_df
 
 
@@ -512,7 +596,7 @@ def normalize_onsets_df(df, instr):
     return df_normalized
 
 
-# PLOT ONSETS
+# PLOTS
 
 def plot_cycle_onsets(df=None, instr=None, mean_std=True, hist_ons=False, **kwargs):
     '''
@@ -533,7 +617,8 @@ def plot_cycle_onsets(df=None, instr=None, mean_std=True, hist_ons=False, **kwar
 
     Returns
     -------
-    None
+    fig : matplotlib.figure.Figure
+        The figure object containing the subplots.
 
     Notes
     -----
@@ -654,3 +739,102 @@ def plot_cycle_onsets(df=None, instr=None, mean_std=True, hist_ons=False, **kwar
 
     plt.tight_layout()
     plt.show()
+
+    return fig
+
+def plot_cycle_hist(df=None, instr=None, mean_std=True, bins=100, **kwargs):
+    
+    """
+    Plot histogram of all onsets for all instruments in the DataFrame `df`.
+
+    Parameters
+    ----------
+    - df : DataFrame
+        DataFrame containing the instrument onsets.
+    - instr : str or list of str
+        List of instrument names to plot.
+    - mean_std : bool
+        If `True`, then mean and std are plotted for each subdivision.
+    - bins : int
+        Number of bins to use for the histogram.
+    - kwargs
+        Additional keyword arguments to `matplotlib`.
+
+    Returns
+    -------
+    - fig : matplotlib.figure.Figure
+        The figure object containing the histogram plot.
+
+    """
+    # Check if instr is a string or a list
+    if isinstance(instr, str):
+        instr = [instr]
+
+    # Add '_norm' suffix to instrument names
+    instr_norm = [f"{inst}_norm" for inst in instr]   
+
+    # Normalize onsets
+    norm_df = normalize_onsets_df(df, instr)
+
+    # Set default values for kwargs
+    kwargs.setdefault('color', 'lightsalmon')
+    kwargs.setdefault('alpha', 0.6)
+    kwargs.setdefault('marker', 'o')
+    kwargs.setdefault('markersize', 2)
+
+    # Get number of subdivisions
+    div_nos = sorted(norm_df['SD'].unique())
+    num_div = len(div_nos)    
+
+    # Create a figure and axis for the histogram
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+
+    # Combine onsets from all instruments for a single histogram plot
+    all_onsets = []
+    for instrument in instr_norm:
+        onsets_flattened = norm_df[instrument].values.flatten()
+        onsets_flattened = onsets_flattened[~np.isnan(onsets_flattened)]
+        all_onsets.extend(onsets_flattened)
+
+    # Plot histogram of all onsets
+    ax.hist(all_onsets, bins=bins, density=False, alpha=kwargs['alpha'] ,color=kwargs['color'])
+    ax.set_xlabel("Metric position within the rhythm cycle", fontsize=14)
+    ax.set_ylabel("Frequency", fontsize=14)
+    ax.set_title("Distribution of Onsets for All Instruments", fontsize=14)
+
+    # Set the plot properties
+    ax.grid(False)
+    ax.tick_params(length=10, width=1)
+
+    # Set the x-axis ticks and labels
+    x_ticks = np.linspace(0, 1, num_div + 1)
+    x_labels = [num + 1 for num in range(num_div)]
+    ax.set_xticks(x_ticks[:-1])
+    ax.set_xticklabels(x_labels, fontsize=14)
+    ax.set_xlim(-0.10, 1)
+    
+    # Remove spines
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    
+    if mean_std:
+        # Calculate and plot mean/std dev for each SD value
+        for sd in div_nos:
+            sd_onsets = norm_df[norm_df['SD'] == sd][instr_norm].values.flatten()
+            sd_onsets = sd_onsets[~np.isnan(sd_onsets)]
+            
+            if len(sd_onsets) > 0:
+                # Fit a normal distribution to the data
+                mu, std = sp.norm.fit(sd_onsets)
+                
+                ax.axvline(x=mu, ymin= 0.1, ymax= 1, 
+                           linestyle='--', color='royalblue', linewidth=0.7)
+                ax.text(mu, 0 , "{:3.0f}".format(mu * 100 * num_div / 4) + "%",
+                        color='royalblue', horizontalalignment='center',
+                        verticalalignment='bottom', fontsize=10)
+        
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig
